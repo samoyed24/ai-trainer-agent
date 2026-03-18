@@ -200,8 +200,16 @@ class TestTrainingAgent(unittest.TestCase):
         self.assertIsNotNone(self.agent.collector)
         self.assertIsNotNone(self.agent.uploader)
 
-    def test_minimal_initialization_with_defaults(self):
+    @patch('ai_trainer_agent.config.load_config')
+    def test_minimal_initialization_with_defaults(self, mock_load_config):
         """测试最简初始化（不传配置）"""
+        # Mock 配置加载，防止读取用户本地配置中的后端凭证
+        mock_load_config.return_value = {
+            "server": {"url": "http://localhost:8000/metrics", "timeout": 10},
+            "agent": {"upload_frequency": "epoch", "upload_interval": 1},
+            "metrics": {}
+        }
+        
         agent = TrainingAgent(train_id="minimal_default")
         try:
             self.assertEqual(agent.train_id, "minimal_default")
@@ -209,8 +217,16 @@ class TestTrainingAgent(unittest.TestCase):
         finally:
             agent.close()
 
-    def test_minimal_initialization_with_server_url(self):
+    @patch('ai_trainer_agent.config.load_config')
+    def test_minimal_initialization_with_server_url(self, mock_load_config):
         """测试最简初始化（仅传server_url）"""
+        # Mock 配置加载，防止读取用户本地配置中的后端凭证
+        mock_load_config.return_value = {
+            "server": {"url": "http://localhost:8000/metrics", "timeout": 10},
+            "agent": {"upload_frequency": "epoch", "upload_interval": 1},
+            "metrics": {}
+        }
+        
         custom_url = "https://example.com/webhook"
         agent = TrainingAgent(server_url=custom_url, train_id="minimal_url")
         try:
