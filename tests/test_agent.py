@@ -20,6 +20,52 @@ from ai_trainer_agent.config import (
 )
 
 
+def _isolated_runtime_config():
+    """返回隔离后的运行配置，确保测试不会读取用户本地后端凭证。"""
+    return {
+        "backend": {
+            "api": "",
+            "app_id": "",
+            "app_secret": "",
+            "timeout": 10,
+        },
+        "server": {
+            "url": "http://localhost:8000/metrics",
+            "timeout": 10,
+            "retry_count": 3,
+        },
+        "agent": {
+            "upload_frequency": "epoch",
+            "upload_interval": 1,
+            "buffer_size": 100,
+            "enable_async": False,
+        },
+        "metrics": {
+            "monitor": {
+                "loss": True,
+                "accuracy": True,
+                "learning_rate": True,
+                "batch_time": True,
+                "epoch_time": True,
+                "model_size": True,
+            },
+            "include_system_info": True,
+        },
+    }
+
+
+def _isolated_server_config():
+    return _isolated_runtime_config()["server"]
+
+
+def _isolated_agent_config():
+    return _isolated_runtime_config()["agent"]
+
+
+def _isolated_metrics_config():
+    return _isolated_runtime_config()["metrics"]
+
+
 class TestMetricsCollector(unittest.TestCase):
     """测试指标收集器"""
     
@@ -184,15 +230,29 @@ class TestTrainingAgent(unittest.TestCase):
     """测试训练Agent"""
     
     def setUp(self):
+        self.load_config_patcher = patch(
+            'ai_trainer_agent.agent.load_config',
+            return_value=_isolated_runtime_config(),
+        )
+        self.load_config_patcher.start()
+
+        self.session_post_patcher = patch('requests.Session.post')
+        self.mock_session_post = self.session_post_patcher.start()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        self.mock_session_post.return_value = mock_response
+
         self.agent = TrainingAgent(
-            server_config=SERVER_CONFIG,
-            agent_config=AGENT_CONFIG,
-            metrics_config=METRICS_CONFIG,
+            server_config=_isolated_server_config(),
+            agent_config=_isolated_agent_config(),
+            metrics_config=_isolated_metrics_config(),
             train_id="test_001"
         )
     
     def tearDown(self):
         self.agent.close()
+        self.session_post_patcher.stop()
+        self.load_config_patcher.stop()
     
     def test_initialization(self):
         """测试初始化"""
@@ -200,37 +260,25 @@ class TestTrainingAgent(unittest.TestCase):
         self.assertIsNotNone(self.agent.collector)
         self.assertIsNotNone(self.agent.uploader)
 
-    @patch('ai_trainer_agent.config.load_config')
-    def test_minimal_initialization_with_defaults(self, mock_load_config):
+    @patch('ai_trainer_agent.agent.fetch_remote_config')
+    def test_minimal_initialization_with_defaults(self, mock_fetch_remote_config):
         """测试最简初始化（不传配置）"""
-        # Mock 配置加载，防止读取用户本地配置中的后端凭证
-        mock_load_config.return_value = {
-            "server": {"url": "http://localhost:8000/metrics", "timeout": 10},
-            "agent": {"upload_frequency": "epoch", "upload_interval": 1},
-            "metrics": {}
-        }
-        
         agent = TrainingAgent(train_id="minimal_default")
         try:
             self.assertEqual(agent.train_id, "minimal_default")
             self.assertIsNotNone(agent.server_config.get("url"))
+            mock_fetch_remote_config.assert_not_called()
         finally:
             agent.close()
 
-    @patch('ai_trainer_agent.config.load_config')
-    def test_minimal_initialization_with_server_url(self, mock_load_config):
+    @patch('ai_trainer_agent.agent.fetch_remote_config')
+    def test_minimal_initialization_with_server_url(self, mock_fetch_remote_config):
         """测试最简初始化（仅传server_url）"""
-        # Mock 配置加载，防止读取用户本地配置中的后端凭证
-        mock_load_config.return_value = {
-            "server": {"url": "http://localhost:8000/metrics", "timeout": 10},
-            "agent": {"upload_frequency": "epoch", "upload_interval": 1},
-            "metrics": {}
-        }
-        
         custom_url = "https://example.com/webhook"
         agent = TrainingAgent(server_url=custom_url, train_id="minimal_url")
         try:
             self.assertEqual(agent.server_config.get("url"), custom_url)
+            mock_fetch_remote_config.assert_not_called()
         finally:
             agent.close()
 
@@ -337,9 +385,9 @@ class TestTrainingAgent(unittest.TestCase):
     def test_context_manager(self):
         """测试with语句使用"""
         with TrainingAgent(
-            server_config=SERVER_CONFIG,
-            agent_config=AGENT_CONFIG,
-            metrics_config=METRICS_CONFIG
+            server_config=_isolated_server_config(),
+            agent_config=_isolated_agent_config(),
+            metrics_config=_isolated_metrics_config()
         ) as agent:
             self.assertIsNotNone(agent)
             agent.record_loss(0.5)
@@ -347,18 +395,29 @@ class TestTrainingAgent(unittest.TestCase):
 
 class TestIntegration(unittest.TestCase):
     """集成测试"""
+
+    def setUp(self):
+        self.load_config_patcher = patch(
+            'ai_trainer_agent.agent.load_config',
+            return_value=_isolated_runtime_config(),
+        )
+        self.load_config_patcher.start()
+
+    def tearDown(self):
+        self.load_config_patcher.stop()
     
+    @patch('ai_trainer_agent.agent.fetch_remote_config')
     @patch('requests.Session.post')
-    def test_full_training_workflow(self, mock_post):
+    def test_full_training_workflow(self, mock_post, mock_fetch_remote_config):
         """测试完整训练流程"""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_post.return_value = mock_response
         
         with TrainingAgent(
-            server_config=SERVER_CONFIG,
-            agent_config=AGENT_CONFIG,
-            metrics_config=METRICS_CONFIG,
+            server_config=_isolated_server_config(),
+            agent_config=_isolated_agent_config(),
+            metrics_config=_isolated_metrics_config(),
             train_id="integration_test"
         ) as agent:
             # 模拟多个epoch的训练
@@ -375,6 +434,7 @@ class TestIntegration(unittest.TestCase):
         
         # 应该至少上传2次（每个epoch）
         self.assertGreaterEqual(mock_post.call_count, 2)
+        mock_fetch_remote_config.assert_not_called()
 
 
 def run_tests():
