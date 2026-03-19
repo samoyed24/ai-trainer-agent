@@ -43,6 +43,7 @@ ai-trainer-agent/
 │   └── test_agent.py
 ├── docs/
 │   ├── QUICK_START.md
+│   ├── INTEGRATION_PROTOCOL.md  # 对接协议（上传格式 + 配置下发格式）
 │   ├── PROJECT_OVERVIEW.md
 │   └── CHEATSHEET.py
 ├── pyproject.toml           # uv项目配置（依赖源）
@@ -50,6 +51,7 @@ ai-trainer-agent/
 ├── requirements.txt         # 兼容导出依赖（可选）
 └── README.md                # 本文件
 ```
+
 
 ## 快速开始（3步）
 
